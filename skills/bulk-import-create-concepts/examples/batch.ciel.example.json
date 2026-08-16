@@ -1,0 +1,75 @@
+{
+  "slug": "malaria-rdt-ciel",
+  "request": "Create 2 malaria rapid diagnostic test concepts in CIEL, with CIEL house rules applied",
+  "profile": "ciel",
+  "target": {
+    "owner": "CIEL",
+    "owner_type": "Organization",
+    "source": "CIEL",
+    "validation_schema": "OpenMRS",
+    "default_locale": "en",
+    "supported_locales": ["en", "pt"]
+  },
+  "defaults": {
+    "concept_class": "Test",
+    "datatype": "Coded",
+    "locale": "en"
+  },
+  "concepts": [
+    {
+      "id": "900101",
+      "names": [
+        {
+          "name": "Malaria rapid diagnostic test, P. falciparum",
+          "locale": "en",
+          "locale_preferred": true,
+          "name_type": "FULLY_SPECIFIED"
+        },
+        {
+          "name": "Falciparum RDT",
+          "locale": "en",
+          "locale_preferred": false,
+          "name_type": "SYNONYM"
+        }
+      ],
+      "descriptions": [
+        {
+          "description": "Result of a rapid diagnostic test for Plasmodium falciparum antigen.",
+          "locale": "en",
+          "description_type": "Definition"
+        }
+      ],
+      "mappings": [
+        {
+          "map_type": "SAME-AS",
+          "to_source_url": "/orgs/CIEL/sources/SNOMED-CT/",
+          "to_concept_code": "1179584009"
+        }
+      ]
+    },
+    {
+      "id": "900102",
+      "concept_class": "Test",
+      "datatype": "Numeric",
+      "names": [
+        {
+          "name": "Parasite density, malaria",
+          "locale": "en",
+          "locale_preferred": true,
+          "name_type": "FULLY_SPECIFIED"
+        }
+      ],
+      "descriptions": [
+        {
+          "description": "Quantified density of malaria parasites in a blood film.",
+          "locale": "en",
+          "description_type": "Definition"
+        }
+      ],
+      "extras": {
+        "units": "1/uL",
+        "low_absolute": 0
+      }
+    }
+  ]
+}

@@ -12,10 +12,11 @@ from __future__ import annotations
 
 import re
 import unicodedata
+import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 # --------------------------------------------------------------------------- #
 # Vocabularies: the name strings of the concepts in the OCL lookup sources
@@ -47,8 +48,13 @@ DATATYPES: frozenset[str] = frozenset({
 FULLY_SPECIFIED_ALIASES: frozenset[str] = frozenset({"FULLY_SPECIFIED", "Fully Specified"})
 SHORT_ALIASES: frozenset[str] = frozenset({"SHORT", "Short"})
 INDEX_TERM_ALIASES: frozenset[str] = frozenset({"INDEX_TERM", "Index Term"})
+# 'SYNONYM' is CIEL/OpenMRS vocabulary for "no type at all". OCL's OpenMRS
+# validator rejects a literal "SYNONYM", so it is accepted here and emitted as
+# an *absent* name_type. See reference/ciel-concept-rules.md.
+SYNONYM = "SYNONYM"
 NAME_TYPES: frozenset[str] = (
-    FULLY_SPECIFIED_ALIASES | SHORT_ALIASES | INDEX_TERM_ALIASES | frozenset({"None"})
+    FULLY_SPECIFIED_ALIASES | SHORT_ALIASES | INDEX_TERM_ALIASES
+    | frozenset({"None", SYNONYM})
 )
 DESCRIPTION_TYPES: frozenset[str] = frozenset({"Definition", "None"})
 
@@ -66,6 +72,21 @@ CONCEPT_ID_RE = re.compile(r"^[a-zA-Z0-9\-\.\_\@\+\%\s]+$")
 
 ValidationSchema = Literal["None", "OpenMRS"]
 OwnerType = Literal["Organization", "User"]
+# Which rulebook to apply on top of the OCL/OpenMRS baseline.
+Profile = Literal["generic", "ciel"]
+
+# Last-resort values when nothing else determined the field. Reaching these is
+# a review finding, not a normal outcome: a concept_class of Misc or a datatype
+# of N/A should be a decision someone made, never something that just happened.
+FALLBACK_CONCEPT_CLASS = "Misc"
+FALLBACK_DATATYPE = "N/A"
+
+# Where a field's value came from. Surfaced in the CSV so a reviewer can tell a
+# deliberate 'Misc' from an unclassified one.
+FieldOrigin = Literal["explicit", "batch-default", "fallback"]
+# Namespace for deriving stable external ids. Fixed so that the CSV the user
+# approves and the ZIP built afterwards carry identical values.
+EXTERNAL_ID_NAMESPACE = uuid.UUID("6f2b1d64-0f3e-5a7c-9c1a-1f6b2d4e8a30")
 
 
 def is_fully_specified(name_type: str | None) -> bool:
@@ -117,6 +138,13 @@ class ConceptName(BaseModel):
             "(SHORT / INDEX_TERM are matched case-sensitively by OCL)"
         )
 
+    def to_payload(self) -> dict[str, Any]:
+        """OCL wire form. A SYNONYM is the *absence* of a name_type."""
+        payload = {k: v for k, v in self.model_dump().items() if v is not None}
+        if payload.get("name_type") == SYNONYM:
+            payload.pop("name_type")
+        return payload
+
     @property
     def is_fsn(self) -> bool:
         return is_fully_specified(self.name_type)
@@ -157,6 +185,79 @@ class ConceptDescription(BaseModel):
         raise ValueError(f"unknown description_type {value!r}; expected one of {sorted(DESCRIPTION_TYPES)}")
 
 
+# The sentinel CIEL Lab uses for a self mapping on a concept whose id OCL has
+# not assigned yet. Resolved server-side by Concept._create_mapping_from_self.
+PARENT_CONCEPT_SENTINEL = "__parent_concept"
+
+
+class ConceptMapping(BaseModel):
+    """A mapping emitted nested inside the concept line.
+
+    See the IMPORTANT notice in README.md: nested mappings are currently dropped
+    by OCL's bulk importer and depend on an upstream fix.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    map_type: str = Field(min_length=1)
+    to_source_url: str | None = None
+    to_concept_code: str | None = None
+    to_concept_url: str | None = None
+    to_concept_name: str | None = None
+    to_concept: str | None = None
+    external_id: str | None = None
+    sort_weight: float | None = None
+    extras: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("map_type")
+    @classmethod
+    def _normalize_map_type(cls, value: str) -> str:
+        return value.strip().replace("_", "-").replace(" ", "-").upper()
+
+    @model_validator(mode="after")
+    def _needs_a_target(self) -> "ConceptMapping":
+        if self.to_concept or self.to_concept_url:
+            return self
+        if not (self.to_source_url and self.to_concept_code):
+            raise ValueError(
+                "a mapping needs to_concept_url, or to_concept, or both to_source_url "
+                "and to_concept_code"
+            )
+        return self
+
+    def to_payload(self) -> dict[str, Any]:
+        """The nested wire form, matching what the CIEL editor posts."""
+        payload: dict[str, Any] = {"map_type": self.map_type, "retired": False}
+        if self.external_id:
+            payload["external_id"] = self.external_id
+        if self.to_concept_url:
+            payload["to_concept_url"] = self.to_concept_url
+        else:
+            if self.to_source_url:
+                payload["to_source_url"] = self.to_source_url
+            if self.to_concept_code:
+                payload["to_concept_code"] = self.to_concept_code
+            elif self.to_concept:
+                payload["to_concept"] = self.to_concept
+        if self.to_concept_name:
+            payload["to_concept_name"] = self.to_concept_name
+        if self.sort_weight is not None:
+            payload["sort_weight"] = self.sort_weight
+        if self.extras:
+            payload["extras"] = self.extras
+        return payload
+
+    @property
+    def is_same_as(self) -> bool:
+        return self.map_type == "SAME-AS"
+
+    def target_key(self) -> tuple[str, str]:
+        """(source, code) as CIEL's duplicate rules compare them."""
+        source = (self.to_source_url or "").strip().rstrip("/").rsplit("/", 1)[-1].lower()
+        code = (self.to_concept_code or self.to_concept or self.to_concept_url or "").strip().upper()
+        return source, code
+
+
 class ConceptDraft(BaseModel):
     """A single concept the user wants created.
 
@@ -176,8 +277,24 @@ class ConceptDraft(BaseModel):
     extras: dict[str, Any] = Field(default_factory=dict)
     parent_concept_urls: list[str] = Field(default_factory=list)
     hierarchy_meaning: str | None = None
+    # Emitted as separate Mapping lines. Under the CIEL profile the SAME-AS self
+    # mapping is added automatically and must not be listed here.
+    mappings: list[ConceptMapping] = Field(default_factory=list)
     # Free-text provenance for the CSV review sheet; stripped from the JSONL.
+    # The right place for *why* this concept_class and datatype were chosen.
     note: str | None = None
+
+    # Set by ConceptBatch when defaults are resolved; see FieldOrigin.
+    _concept_class_origin: FieldOrigin = PrivateAttr(default="explicit")
+    _datatype_origin: FieldOrigin = PrivateAttr(default="explicit")
+
+    @property
+    def concept_class_origin(self) -> FieldOrigin:
+        return self._concept_class_origin
+
+    @property
+    def datatype_origin(self) -> FieldOrigin:
+        return self._datatype_origin
 
     @field_validator("id")
     @classmethod
@@ -269,6 +386,9 @@ class ConceptBatch(BaseModel):
     # Short kebab/snake description of the user's intent. Drives the file names.
     slug: str = Field(min_length=3)
     request: str = Field(min_length=1, description="Verbatim summary of what the user asked for")
+    # 'ciel' layers CIEL's own in-concept rules and defaults on top of the
+    # OCL/OpenMRS baseline, including the mandatory SAME-AS self mapping.
+    profile: Profile = "generic"
     target: ImportTarget
     defaults: BatchDefaults = Field(default_factory=BatchDefaults)
     concepts: list[ConceptDraft] = Field(min_length=1)
@@ -280,12 +400,78 @@ class ConceptBatch(BaseModel):
 
     @model_validator(mode="after")
     def _apply_defaults(self) -> "ConceptBatch":
+        ciel = self.profile == "ciel"
+        # A default the author wrote is a decision; the model's own default is not.
+        declared = self.defaults.model_fields_set
         for concept in self.concepts:
             if not concept.concept_class:
-                concept.concept_class = self.defaults.concept_class
+                if "concept_class" in declared and self.defaults.concept_class:
+                    concept.concept_class = self.defaults.concept_class
+                    concept._concept_class_origin = "batch-default"
+                else:
+                    concept.concept_class = FALLBACK_CONCEPT_CLASS
+                    concept._concept_class_origin = "fallback"
             if not concept.datatype:
-                concept.datatype = self.defaults.datatype
+                if "datatype" in declared and self.defaults.datatype:
+                    concept.datatype = self.defaults.datatype
+                    concept._datatype_origin = "batch-default"
+                else:
+                    concept.datatype = FALLBACK_DATATYPE
+                    concept._datatype_origin = "fallback"
+            if ciel and not concept.external_id and concept.id:
+                # Derived, not random: the CSV under review and the ZIP built
+                # afterwards must carry the same value, and a re-run must be
+                # byte-identical. Supply external_id explicitly to override.
+                concept.external_id = str(uuid.uuid5(
+                    EXTERNAL_ID_NAMESPACE, self.target.concept_url(concept.id)))
         return self
+
+    def self_mapping(self, concept: ConceptDraft) -> ConceptMapping | None:
+        """CIEL's mandatory SAME-AS mapping from a concept to its own code.
+
+        When the concept has no id, the `__parent_concept` sentinel stands in and
+        OCL resolves it after assigning the mnemonic — the same thing the CIEL
+        editor does, which is why ids are optional under this profile.
+        """
+        if self.profile != "ciel":
+            return None
+        seed = self.target.concept_url(concept.id) if concept.id else \
+            f"{self.target.source_url}::{concept.preferred_name().name}"
+        return ConceptMapping(
+            map_type="SAME-AS",
+            to_source_url=self.target.source_url,
+            to_concept_code=normalize_concept_code(concept.id) if concept.id else None,
+            to_concept=None if concept.id else PARENT_CONCEPT_SENTINEL,
+            external_id=str(uuid.uuid5(EXTERNAL_ID_NAMESPACE, f"self-map:{seed}")),
+        )
+
+    def declared_mappings_for(self, concept: ConceptDraft) -> list[ConceptMapping]:
+        """Everything the author wrote, plus the self mapping, WITHOUT dedup.
+
+        Validation runs against this list: a mapping written twice is an
+        authoring mistake worth reporting (CIEL's FR-12), not something to
+        quietly swallow.
+        """
+        mappings = list(concept.mappings)
+        self_map = self.self_mapping(concept)
+        # Appended only when the author has not already written it, so that an
+        # explicitly declared self map is reported as redundant (FR-13) rather
+        # than as a duplicate mapping (FR-12).
+        if self_map and not any(
+            m.map_type == self_map.map_type and m.target_key() == self_map.target_key()
+            for m in mappings
+        ):
+            mappings.append(self_map)
+        return mappings
+
+    def mappings_for(self, concept: ConceptDraft) -> list[ConceptMapping]:
+        """What actually gets emitted: the declared list, de-duplicated on
+        (map_type, source, code) the way the CIEL editor does."""
+        deduped: dict[tuple[str, str, str], ConceptMapping] = {}
+        for mapping in self.declared_mappings_for(concept):
+            source, code = mapping.target_key()
+            deduped.setdefault((mapping.map_type, source, code), mapping)
+        return list(deduped.values())
 
     def to_jsonl_lines(self) -> list[dict[str, Any]]:
         """Render bulk-import JSONL objects, in OCL dependency order.
@@ -307,10 +493,7 @@ class ConceptBatch(BaseModel):
                 line["external_id"] = concept.external_id
             line["concept_class"] = concept.concept_class
             line["datatype"] = concept.datatype
-            line["names"] = [
-                {k: v for k, v in name.model_dump().items() if v is not None}
-                for name in concept.names
-            ]
+            line["names"] = [name.to_payload() for name in concept.names]
             if concept.descriptions:
                 line["descriptions"] = [
                     {k: v for k, v in desc.model_dump().items() if v is not None}
@@ -321,6 +504,11 @@ class ConceptBatch(BaseModel):
             if concept.parent_concept_urls:
                 line["parent_concept_urls"] = concept.parent_concept_urls
                 line["hierarchy_meaning"] = concept.hierarchy_meaning or "grouped-by"
+            mappings = [m.to_payload() for m in self.mappings_for(concept)]
+            if mappings:
+                # Nested, matching the CIEL editor. Blocked upstream today — see
+                # the IMPORTANT notice in README.md.
+                line["mappings"] = mappings
             line["retired"] = False
             line.update(source_info)
             lines.append(line)
@@ -330,6 +518,12 @@ class ConceptBatch(BaseModel):
 # --------------------------------------------------------------------------- #
 # Naming helpers
 # --------------------------------------------------------------------------- #
+
+
+def normalize_concept_code(value: str) -> str:
+    """Strip a leading `CIEL:` qualifier, as the CIEL editor does."""
+    text = (value or "").strip()
+    return text.split(":", 1)[1].strip() if text.upper().startswith("CIEL:") else text
 
 
 def slugify(value: str, max_length: int = 60) -> str:

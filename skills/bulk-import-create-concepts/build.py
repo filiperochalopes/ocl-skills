@@ -42,13 +42,20 @@ SIZE_SAFETY = 0.90
 CSV_COLUMNS = [
     "row", "status", "id", "concept_class", "datatype", "external_id",
     "preferred_name", "preferred_locale", "synonyms", "descriptions",
-    "parent_concept_urls", "extras", "note", "issues",
+    "parent_concept_urls", "mappings", "extras", "note", "issues",
 ]
 
 
 def _sort_key(line: dict[str, Any]) -> tuple[str, str]:
     """Deterministic order: by id, then by first name. Keeps diffs and parts stable."""
     return str(line.get("id") or ""), line["names"][0]["name"]
+
+
+def _with_origin(value: str | None, origin: str) -> str:
+    """Mark unclassified values so a reviewer can spot them at a glance."""
+    if not value:
+        return ""
+    return f"{value} (UNCLASSIFIED)" if origin == "fallback" else value
 
 
 def build_csv(batch: ConceptBatch, report: Report, out_path: Path) -> Path:
@@ -60,13 +67,16 @@ def build_csv(batch: ConceptBatch, report: Report, out_path: Path) -> Path:
             issues = report.for_row(row)
             preferred = concept.preferred_name()
             synonyms = [n for n in concept.names if n is not preferred]
+            self_map = batch.self_mapping(concept)
+            # self_mapping() builds a fresh object each call, so compare by target.
+            self_key = (self_map.map_type, self_map.target_key()) if self_map else None
             writer.writerow({
                 "row": row,
                 "status": "ERROR" if any(i.severity == "error" for i in issues)
                           else ("WARN" if issues else "OK"),
                 "id": concept.id or "(auto)",
-                "concept_class": concept.concept_class or "",
-                "datatype": concept.datatype or "",
+                "concept_class": _with_origin(concept.concept_class, concept.concept_class_origin),
+                "datatype": _with_origin(concept.datatype, concept.datatype_origin),
                 "external_id": concept.external_id or "",
                 "preferred_name": preferred.name,
                 "preferred_locale": preferred.locale,
@@ -76,6 +86,12 @@ def build_csv(batch: ConceptBatch, report: Report, out_path: Path) -> Path:
                 ),
                 "descriptions": " | ".join(f"{d.description} [{d.locale}]" for d in concept.descriptions),
                 "parent_concept_urls": " | ".join(concept.parent_concept_urls),
+                "mappings": " | ".join(
+                    f"{m.map_type} -> {m.to_concept_url or ''}"
+                    f"{(m.to_source_url or '') + (m.to_concept_code or '')}"
+                    f"{' (self, auto)' if (m.map_type, m.target_key()) == self_key else ''}"
+                    for m in batch.mappings_for(concept)
+                ),
                 "extras": json.dumps(concept.extras, ensure_ascii=False) if concept.extras else "",
                 "note": concept.note or "",
                 "issues": " | ".join(f"{i.rule}: {i.message}" for i in issues),
@@ -193,8 +209,10 @@ def main(argv: list[str] | None = None) -> int:
     paths = build_archives(lines, args.out_dir, stem, args.max_bytes)
 
     print(f"stem:   {stem}")
-    print(f"lines:  {len(lines)} concepts")
-    print(f"target: {batch.target.source_url} (schema={batch.target.validation_schema})")
+    mapping_count = sum(len(batch.mappings_for(c)) for c in batch.concepts)
+    print(f"lines:  {len(lines)} concepts, carrying {mapping_count} nested mapping(s)")
+    print(f"target: {batch.target.source_url} "
+          f"(schema={batch.target.validation_schema}, profile={batch.profile})")
     for path in paths:
         print(f"zip:    {path} ({path.stat().st_size:,} bytes)")
     print("\nHand these to the user to upload themselves — see reference/ocl-bulk-import.md "

@@ -7,6 +7,8 @@ The rules being replayed are written down in `reference/ocl-bulk-import.md`.
 
 Three layers:
 
+0. profile     -- when the batch declares profile "ciel", `ciel_rules.py` adds
+                  CIEL's own in-concept rules (FR-xx / CE-xx) on top
 1. structural  -- `schema.py` (pydantic)
 2. semantic    -- the always-on rules plus, when the source runs the OpenMRS
                   schema, R1-R15; plus cross-row checks inside the batch
@@ -35,6 +37,7 @@ from pathlib import Path
 from typing import Any, Iterable, Literal
 from urllib.parse import quote
 
+import ciel_rules
 from schema import (
     CONCEPT_CLASSES,
     DATATYPES,
@@ -128,6 +131,21 @@ def validate_concept(concept: ConceptDraft, row: int, target: ImportTarget, repo
         if not desc.description.strip():
             report.add("error", "description-empty", "Concept description cannot be empty",
                        row=row, concept_id=cid)
+
+    # --- classification ----------------------------------------------------- #
+    # A fallback here means nobody decided. 'Misc' and 'N/A' are legitimate
+    # answers, but they have to be chosen, not defaulted into.
+    if concept.concept_class_origin == "fallback":
+        report.add("warning", "concept-class-unclassified",
+                   f"concept_class was not set and fell back to {concept.concept_class!r}. Classify it "
+                   "from the concept's name and description (see reference/concept-classification.md); "
+                   "if Misc really is right, set it explicitly and say why in `note`",
+                   row=row, concept_id=cid)
+    if concept.datatype_origin == "fallback":
+        report.add("warning", "datatype-unclassified",
+                   f"datatype was not set and fell back to {concept.datatype!r}. Question-like concepts "
+                   "(Test, Question) need a real datatype; for everything else N/A is correct but should "
+                   "be stated explicitly", row=row, concept_id=cid)
 
     if not cid and not target.autoid_concept_mnemonic:
         report.add("warning", "id-missing",
@@ -420,6 +438,12 @@ def validate(batch: ConceptBatch, *, probe: bool = False, token: str | None = No
     for row, concept in enumerate(batch.concepts, start=1):
         validate_concept(concept, row, batch.target, report)
     validate_batch_uniqueness(batch, report)
+    ciel_rules.validate(batch, report)
+    if any(batch.mappings_for(concept) for concept in batch.concepts):
+        report.add("warning", "nested-mappings-blocked",
+                   "this batch carries nested mappings, which OCL's bulk importer currently DROPS "
+                   "SILENTLY — the import will report success and the mappings will not exist. "
+                   "Depends on the upstream fix; see the IMPORTANT notice in README.md")
 
     if probe:
         validate_against_source(batch, report, token)

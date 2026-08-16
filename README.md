@@ -12,7 +12,7 @@ issue tracker.
 | --- | --- |
 | `SKILL.md` | The agent-facing procedure, with YAML frontmatter (`name`, `description`) |
 | `README.md` | Human-facing reference |
-| `reference/*.md` | The OCL behaviour the skill relies on, written down |
+| `reference/*.md` | The OCL and terminology-owner behaviour the skill relies on, written down |
 | `schema.py` | Pydantic models for the skill's input/output contract |
 | `validation.py` | Client-side replay of the rules OCL enforces server-side |
 
@@ -20,7 +20,7 @@ issue tracker.
 
 | Skill | Purpose |
 | --- | --- |
-| [`bulk-import-create-concepts`](skills/bulk-import-create-concepts/) | Stage many new concepts, review them as CSV, then emit a timestamped zipped bulk-import JSONL |
+| [`bulk-import-create-concepts`](skills/bulk-import-create-concepts/) | Stage many new concepts, review them as CSV, then emit a timestamped zipped bulk-import JSONL. Profiles: `generic` (OCL/OpenMRS) and `ciel` (CIEL house rules, incl. the mandatory self mapping) |
 
 Planned, deliberately kept separate because they carry different risk:
 
@@ -51,6 +51,9 @@ is a separate question, and not one any of these skills answers.
    helps it is opt-in, read-only, and the flow works without it.
 7. **Write down what the server does.** Anything a skill relies on about OCL's
    behaviour belongs in that skill's `reference/`, not in a comment pointing elsewhere.
+8. **A terminology's house rules are a profile, not a fork.** CIEL, and any other owner
+   with its own rulebook, is a `profile` layered on the shared flow — so the review gate,
+   the artifact conventions and the OCL contract stay in one place.
 
 ## Using these with Claude Code
 
