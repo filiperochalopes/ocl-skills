@@ -1,0 +1,106 @@
+{
+  "slug": "malaria-rdt-panel",
+  "request": "Create 3 malaria rapid diagnostic test concepts requested by the CIEL curator on 2026-08-15",
+  "target": {
+    "owner": "CIEL",
+    "owner_type": "Organization",
+    "source": "CIEL",
+    "validation_schema": "OpenMRS",
+    "default_locale": "en",
+    "supported_locales": [
+      "en",
+      "pt"
+    ],
+    "autoid_concept_mnemonic": "sequential"
+  },
+  "defaults": {
+    "concept_class": "Test",
+    "datatype": "Coded",
+    "locale": "en"
+  },
+  "concepts": [
+    {
+      "id": "900001",
+      "concept_class": "LabSet",
+      "datatype": "N/A",
+      "names": [
+        {
+          "name": "Malaria rapid diagnostic test panel",
+          "locale": "en",
+          "locale_preferred": true,
+          "name_type": "FULLY_SPECIFIED"
+        },
+        {
+          "name": "Malaria RDT panel",
+          "locale": "en",
+          "locale_preferred": false,
+          "name_type": "Short"
+        },
+        {
+          "name": "Painel de teste rapido para malaria",
+          "locale": "pt",
+          "locale_preferred": true,
+          "name_type": "FULLY_SPECIFIED"
+        }
+      ],
+      "descriptions": [
+        {
+          "description": "Panel grouping the individual malaria rapid diagnostic test results.",
+          "locale": "en",
+          "description_type": "Definition"
+        }
+      ],
+      "extras": {},
+      "note": "Parent of the two result concepts below"
+    },
+    {
+      "id": "900002",
+      "names": [
+        {
+          "name": "Malaria rapid diagnostic test, P. falciparum",
+          "locale": "en",
+          "locale_preferred": true,
+          "name_type": "FULLY_SPECIFIED"
+        }
+      ],
+      "descriptions": [
+        {
+          "description": "Result of a rapid diagnostic test for Plasmodium falciparum antigen.",
+          "locale": "en",
+          "description_type": "Definition"
+        }
+      ],
+      "parent_concept_urls": [
+        "/orgs/CIEL/sources/CIEL/concepts/900001/"
+      ],
+      "hierarchy_meaning": "grouped-by"
+    },
+    {
+      "id": "900003",
+      "names": [
+        {
+          "name": "Malaria rapid diagnostic test, pan-Plasmodium",
+          "locale": "en",
+          "locale_preferred": true,
+          "name_type": "FULLY_SPECIFIED"
+        },
+        {
+          "name": "Pan-malaria RDT",
+          "locale": "en",
+          "locale_preferred": false,
+          "name_type": "INDEX_TERM"
+        }
+      ],
+      "descriptions": [
+        {
+          "description": "Result of a rapid diagnostic test detecting pan-Plasmodium antigen.",
+          "locale": "en",
+          "description_type": "Definition"
+        }
+      ],
+      "parent_concept_urls": [
+        "/orgs/CIEL/sources/CIEL/concepts/900001/"
+      ]
+    }
+  ]
+}

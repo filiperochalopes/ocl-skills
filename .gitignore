@@ -1,0 +1,9 @@
+output/
+*.zip
+*.jsonl
+*.ndjson
+.env
+venv/
+.venv/
+__pycache__/
+*.pyc
