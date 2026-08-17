@@ -376,6 +376,9 @@ class BatchDefaults(BaseModel):
     concept_class: str | None = None
     datatype: str | None = "N/A"
     locale: str = "en"
+    # Merged into every concept's extras. A key the concept sets itself wins,
+    # so a batch-wide flag can still be overridden row by row.
+    extras: dict[str, Any] = Field(default_factory=dict)
 
 
 class ConceptBatch(BaseModel):
@@ -418,6 +421,9 @@ class ConceptBatch(BaseModel):
                 else:
                     concept.datatype = FALLBACK_DATATYPE
                     concept._datatype_origin = "fallback"
+            if self.defaults.extras:
+                # Batch-wide extras, with the concept's own keys taking priority.
+                concept.extras = {**self.defaults.extras, **concept.extras}
             if ciel and not concept.external_id and concept.id:
                 # Derived, not random: the CSV under review and the ZIP built
                 # afterwards must carry the same value, and a re-run must be

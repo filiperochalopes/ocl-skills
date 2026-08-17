@@ -112,7 +112,8 @@ def _class_accepted(concept_class: str) -> bool:
     return concept_class in CONCEPT_CLASSES or concept_class.replace("-", " ") in CONCEPT_CLASSES
 
 
-def validate_concept(concept: ConceptDraft, row: int, target: ImportTarget, report: Report) -> None:
+def validate_concept(concept: ConceptDraft, row: int, target: ImportTarget, report: Report,
+                     profile: str = "generic") -> None:
     cid = concept.id
     openmrs = target.validation_schema == "OpenMRS"
 
@@ -152,6 +153,26 @@ def validate_concept(concept: ConceptDraft, row: int, target: ImportTarget, repo
                    "no id and the source has no autoid_concept_mnemonic: OCL will fall back to an internal "
                    "sequence/UUID and update_if_exists can never match this line",
                    row=row, concept_id=cid)
+
+    # --- extras --------------------------------------------------------------- #
+    # OCL stores extras as JSON and does not coerce, so "false" and false are two
+    # different values to anything reading them back. CIEL itself uses string
+    # booleans in places, so this is advisory, not a rule.
+    # Keys the CIEL vocabulary types are left to ciel_rules, which reports the
+    # same defect as extras-unexpected-type with the expected type named.
+    typed_elsewhere = set(ciel_rules.KNOWN_EXTRA_KEYS) if profile == "ciel" else set()
+    for key, value in concept.extras.items():
+        if (isinstance(value, str) and value.strip().lower() in {"true", "false"}
+                and key not in typed_elsewhere):
+            report.add("warning", "extras-string-boolean",
+                       f"extras[{key!r}] is the string {value!r}, not the boolean {value.strip().lower()}. "
+                       "OCL stores extras as JSON verbatim, so a consumer testing for a boolean will not "
+                       "match. Confirm which the target expects — some CIEL extras are string booleans",
+                       row=row, concept_id=cid)
+        if key != key.strip():
+            report.add("error", "extras-key-whitespace",
+                       f"extras key {key!r} has leading or trailing whitespace",
+                       row=row, concept_id=cid)
 
     # --- vocabularies ------------------------------------------------------- #
     # Checked even under the 'None' schema: OCL will not reject them there, but a
@@ -436,7 +457,7 @@ def validate(batch: ConceptBatch, *, probe: bool = False, token: str | None = No
         batch = batch.model_copy(update={"target": resolved})
 
     for row, concept in enumerate(batch.concepts, start=1):
-        validate_concept(concept, row, batch.target, report)
+        validate_concept(concept, row, batch.target, report, batch.profile)
     validate_batch_uniqueness(batch, report)
     ciel_rules.validate(batch, report)
     if any(batch.mappings_for(concept) for concept in batch.concepts):

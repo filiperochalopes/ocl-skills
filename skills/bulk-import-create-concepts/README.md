@@ -28,6 +28,7 @@ self-contained — nothing here requires another repository or an external docum
   vocabularies, `__action` semantics, result buckets and upload limits.
 - `reference/ciel-concept-rules.md` — CIEL's house rules: the mandatory self mapping,
   CIEL's creation defaults, and which FR/CE rules are covered, delegated or skipped.
+- `reference/ciel-extras.md` — the extras vocabulary observed on CIEL/CIEL, with types.
 
 ## Profiles
 
@@ -81,11 +82,21 @@ A single JSON document (`schema.py::ConceptBatch`):
 | `slug` | Short description of the request; slugified into the file names |
 | `request` | Verbatim summary of what the user asked for — provenance for the review |
 | `target` | `owner`, `owner_type` (`Organization`/`User`), `source`, plus the source's validation profile: `validation_schema`, `default_locale`, `supported_locales`, `autoid_concept_mnemonic` |
-| `defaults` | `concept_class`, `datatype` (default `N/A`), `locale` — applied to rows that omit them |
+| `defaults` | `concept_class`, `datatype` (default `N/A`), `locale` — applied to rows that omit them; plus `extras`, merged into every concept with the concept's own keys winning |
 | `profile` | `generic` (default) or `ciel` |
 | `concepts[]` | `id`, `external_id`, `concept_class`, `datatype`, `names[]`, `descriptions[]`, `mappings[]`, `extras`, `parent_concept_urls[]`, `hierarchy_meaning`, `note` |
 
 `note` is review-only metadata; it appears in the CSV and is stripped from the JSONL.
+
+`extras` is an open JSON object and passes through verbatim — strings, booleans,
+numbers, arrays, nested objects. Set it per concept, or batch-wide via
+`defaults.extras`. Note that OCL does not coerce types, so `"false"` and `false` are
+different stored values; `validation.py` raises `extras-string-boolean` as an advisory
+when a value is a stringified boolean, since CIEL uses both conventions.
+
+Under the `ciel` profile the keys are additionally checked against the vocabulary
+sampled from CIEL/CIEL itself, so `unitss` and `clincal` are caught as probable typos
+and `retired_reason` — which OCL owns as a real column — is an error.
 
 There is deliberately **no** `retired` and **no** `__action` field. In OCL,
 `__action: DELETE` on a concept line retires the concept — a different intent that
@@ -103,7 +114,9 @@ belongs in a different flow.
    duplicate FSNs/preferred names within the batch, unresolvable parents).
 3. **Repository** — *optional and read-only*. `--probe` fetches the live source's
    validation profile and flags ids that already exist and FSNs that would collide.
-   GETs only; a token is needed solely for a private source.
+   GETs only; a token is needed solely for a private source. The `ocl-overview` skill
+   does the same profile lookup through the `ocl` CLI, which is usually easier because
+   the CLI already holds the credential.
 
 Layers 1 and 2 are the normal path and run fully offline. They matter because OCL puts
 validation failures in its `others` bucket and echoes back the offending line **without

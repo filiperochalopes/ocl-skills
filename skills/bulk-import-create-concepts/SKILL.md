@@ -20,6 +20,8 @@ Everything needed to build a correct file lives in this skill directory:
   profile: the mandatory self mapping, CIEL defaults, and the FR/CE rule coverage.
 - **`reference/concept-classification.md`** — how to choose `concept_class` and
   `datatype` from a concept's name and description.
+- **`reference/ciel-extras.md`** — the extras keys CIEL/CIEL actually uses, with the
+  JSON types the live data carries.
 
 Read them when a detail is unclear; do not guess and do not rely on other repositories
 being present.
@@ -35,8 +37,6 @@ The batch declares which rulebook applies:
 
 Use `ciel` whenever the destination is a CIEL-governed source — normally
 `CIEL/CIEL`. Ask if it is not obvious; do not infer it from the org name alone.
-
-Two things change materially under `ciel`, and both are worth saying out loud:
 
 Every concept gets the mandatory `SAME-AS` self mapping automatically, nested in the
 concept line the same way the CIEL editor posts it. Concepts without an `id` use the
@@ -87,18 +87,30 @@ Then the source's validation profile, because it decides which rules apply:
 - **validation_schema** — `OpenMRS` or `None`. CIEL is `OpenMRS`, which is far
   stricter. Getting this wrong means validating against the wrong rule set.
 - **default_locale** and **supported_locales**
-- **autoid_concept_mnemonic** — if set, `id` may be omitted (not under the `ciel` profile)
+- **autoid_concept_mnemonic** — if set, `id` may be omitted
 
 All four go in the batch file's `target` block, so the reviewer sees what was assumed.
-The user can read them off the source's page in OCL. If they would rather not look them
-up, there is an optional read-only lookup that fetches them:
+
+The quickest way to fill them in is the `ocl-overview` skill, which ends its source
+summary with a ready-to-paste `target` block:
+
+```bash
+ocl whoami                                          # confirm user AND server first
+python ../ocl-overview/overview.py CIEL CIEL
+```
+
+Failing that, the user can read them off the source's page in OCL, or this skill has its
+own optional read-only lookup:
 
 ```bash
 python validation.py batch.json --probe
 ```
 
-`--probe` issues GET requests only and is never required. It needs a token only for a
-private source. Everything else in this skill works fully offline.
+Both are reads. `--probe` needs a token only for a private source, and everything else
+in this skill works fully offline.
+
+Confirming the destination with the user is still required either way — a lookup fills
+in the profile, it does not make the decision.
 
 ### 2. Classify every concept — do not let defaults decide
 
@@ -161,6 +173,47 @@ Under the `ciel` profile, additionally: a missing `external_id` is derived as a 
 UUID, and `"name_type": "SYNONYM"` is accepted and emitted as an absent type (OCL
 rejects the literal string). `examples/batch.ciel.example.json` is a working CIEL batch.
 
+### 3b. Extras
+
+`extras` is an open JSON object on every concept — whatever the user asks for goes in.
+Two ways to set it:
+
+```json
+"defaults": {"extras": {"clinical": "false", "source_of_truth": "curator-request"}},
+"concepts": [{"id": "7102", "extras": {"clinical": "true"}}]
+```
+
+Batch `defaults.extras` is merged into every concept; a key the concept sets itself
+wins, so a batch-wide flag can still be overridden row by row. All JSON types survive
+verbatim — strings, booleans, numbers, arrays, nested objects.
+
+One trap worth raising with the user: OCL stores extras as JSON **without coercing**, so
+`"false"` (string) and `false` (boolean) are different values, and a consumer testing
+for a boolean will not match the string. `validation.py` warns with
+`extras-string-boolean` whenever a value is the string `"true"` or `"false"`. It is a
+warning, not an error, because CIEL genuinely uses string booleans in places
+(`IsPostcoordinated: "True"`). Ask which one the target expects rather than guessing.
+
+The merged result appears in the review CSV's `extras` column, so the reviewer sees what
+each concept will actually carry.
+
+Under the `ciel` profile the keys are also checked against the vocabulary CIEL/CIEL
+actually uses, sampled from the live source — see `reference/ciel-extras.md`:
+
+- `extras-unknown-key` (warning) catches typos like `unitss` or `clincal`
+- `extras-unexpected-type` (warning) catches `allow_decimal: "true"` when the data
+  stores a real boolean, or `low_absolute: "zero"` where a number belongs
+- `extras-reserved-key` (**error**) catches `retired_reason`, which OCL owns as a column
+
+Some keys are load-bearing: the numeric metadata (`units`, `hi_absolute`,
+`allow_decimal`, …) drives CE-02/CE-03, and `is_set` drives CE-04.
+
+Mind the boolean-ish keys: `allow_decimal` and `clinical` are real JSON booleans, while
+`is_set` is the integer `1` — the last is the live data's doing, not a choice.
+
+An unknown key is a warning, not a blocker — a genuinely new key is legitimate. Ask the
+user to confirm it rather than silently shipping a misspelling.
+
 ### 4. Validate
 
 ```bash
@@ -216,6 +269,20 @@ Then hand the file over and stop. Tell the user:
 - to compare `created` against the approved CSV's row count, and to bring back anything
   landing in `others`, `invalid` or `failed` for a new round
 
+### Verify afterwards — the task summary is not enough
+
+When the user reports the upload is done, check the result with the CLI rather than
+trusting `Created: N`. OCL counts concept lines and says nothing about mappings it
+dropped, so a batch carrying mappings can report complete success and be missing all of
+them (see the IMPORTANT notice above).
+
+```bash
+ocl concept get <owner> <source> <id> --include-mappings
+```
+
+Sample several ids from the approved CSV, and for a CIEL batch confirm the `SAME-AS`
+self mapping is actually there. Report what you checked and what you found.
+
 `reference/ocl-bulk-import.md` section 8 has the full upload walkthrough.
 
 ## Rules replayed by `validation.py`
@@ -266,6 +333,7 @@ Full rule table, exact server messages and vocabularies: `reference/ocl-bulk-imp
 | `reference/ocl-bulk-import.md` | The OCL import contract — format, rules, messages, vocabularies, limits, manual upload |
 | `reference/ciel-concept-rules.md` | CIEL's house rules — self mapping, defaults, FR/CE coverage |
 | `reference/concept-classification.md` | Choosing `concept_class` and `datatype`, with worked examples |
+| `reference/ciel-extras.md` | The CIEL/CIEL extras vocabulary, sampled from the live source |
 | `ciel_rules.py` | The `ciel` profile's in-concept rules |
 | `schema.py` | Pydantic models, vocabularies, artifact naming (`<slug>_<owner>_<source>_<yyyymmdd_hhii>`) |
 | `validation.py` | Rule replay; optional read-only source lookup; CLI report |

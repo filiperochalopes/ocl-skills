@@ -41,11 +41,43 @@ OPENMRS_UUID_LENGTH = 36
 # CE-04: these classes are meaningless without members.
 SET_CONCEPT_CLASSES = frozenset({"LabSet", "MedSet", "ConvSet", "InteractSet"})
 
-# CE-02/CE-03: the numeric metadata CIEL keeps in extras.
+# CE-02/CE-03: the numeric metadata CIEL keeps in extras. `hi_*` also appears as
+# `high_*`, which the CIEL editor reads as an alias.
 NUMERIC_EXTRA_KEYS = (
-    "units", "hi_absolute", "low_absolute", "hi_critical", "low_critical",
-    "hi_normal", "low_normal", "precise",
+    "units", "hi_absolute", "high_absolute", "low_absolute",
+    "hi_critical", "high_critical", "low_critical",
+    "hi_normal", "high_normal", "low_normal",
+    "allow_decimal", "precise",
 )
+
+# The extras vocabulary observed on CIEL/CIEL, with the JSON types the live data
+# actually carries. Sampled from the source itself — see
+# reference/ciel-extras.md for the counts and how to refresh this.
+KNOWN_EXTRA_KEYS: dict[str, tuple[type, ...]] = {
+    "units": (str,),
+    "hi_absolute": (int, float),
+    "high_absolute": (int, float),
+    "low_absolute": (int, float),
+    "hi_critical": (int, float),
+    "high_critical": (int, float),
+    "low_critical": (int, float),
+    "hi_normal": (int, float),
+    "high_normal": (int, float),
+    "low_normal": (int, float),
+    "allow_decimal": (bool,),
+    "precise": (bool,),
+    "is_set": (bool, int),
+    # Declared by CIEL, not yet present in the live data. A real JSON boolean,
+    # like allow_decimal — not the string "true"/"false".
+    "clinical": (bool,),
+}
+
+# Description metadata, keyed `<Label>(<external_id>)`.
+DESCRIPTION_META_RE = re.compile(
+    r"^\s*(Definition|Description|Caption|Reference)\s*\([^)]+\)\s*$", re.IGNORECASE)
+
+# Keys that must never be extras: OCL owns them as real columns.
+RESERVED_EXTRA_KEYS = frozenset({"retired_reason", "retire_reason"})
 
 # FR-23: a residual ("other"/"unspecified") code should not be a SAME-AS target.
 ICD10_RESIDUAL_SUFFIX = ".8"
@@ -132,6 +164,32 @@ def validate_concept(batch: ConceptBatch, concept: ConceptDraft, row: int, repor
         elif concept.concept_class == "Test" and not str(concept.extras.get("units", "")).strip():
             report.add("error", "CE-03",
                        "a Numeric concept of class Test needs extras.units",
+                       row=row, concept_id=cid)
+
+    # --- extras vocabulary ---------------------------------------------------- #
+    for key, value in concept.extras.items():
+        if key in RESERVED_EXTRA_KEYS:
+            report.add("error", "extras-reserved-key",
+                       f"extras[{key!r}] collides with an OCL column; a retire reason belongs in the "
+                       "concept's own retire_reason, not in extras",
+                       row=row, concept_id=cid)
+            continue
+        expected = KNOWN_EXTRA_KEYS.get(key)
+        if expected is None:
+            if not DESCRIPTION_META_RE.match(key):
+                report.add("warning", "extras-unknown-key",
+                           f"extras[{key!r}] is not in the vocabulary observed on CIEL/CIEL "
+                           f"({', '.join(sorted(KNOWN_EXTRA_KEYS))}). Fine if deliberate — confirm it is "
+                           "not a typo, and that whatever consumes it expects this name",
+                           row=row, concept_id=cid)
+            continue
+        # bool is a subclass of int; check it first so True never passes as a number.
+        actual_ok = (isinstance(value, bool) and bool in expected) or (
+            not isinstance(value, bool) and isinstance(value, expected))
+        if not actual_ok:
+            report.add("warning", "extras-unexpected-type",
+                       f"extras[{key!r}] is {type(value).__name__} {value!r}; CIEL/CIEL stores this key as "
+                       f"{' or '.join(e.__name__ for e in expected)}",
                        row=row, concept_id=cid)
 
     # --- mapping rules ------------------------------------------------------- #

@@ -21,6 +21,7 @@ issue tracker.
 | Skill | Purpose |
 | --- | --- |
 | [`bulk-import-create-concepts`](skills/bulk-import-create-concepts/) | Stage many new concepts, review them as CSV, then emit a timestamped zipped bulk-import JSONL. Profiles: `generic` (OCL/OpenMRS) and `ciel` (CIEL house rules, incl. the mandatory self mapping) |
+| [`ocl-overview`](skills/ocl-overview/) | Read-only structured summary of an org or source — content, validation profile, locales, autoid, versions. Also verifies an import landed |
 
 Planned, deliberately kept separate because they carry different risk:
 
@@ -31,7 +32,21 @@ Planned, deliberately kept separate because they carry different risk:
 Each would produce a file for manual upload, like this one. Automating the upload itself
 is a separate question, and not one any of these skills answers.
 
+## Prerequisites
+
+The [OCL CLI](https://github.com/OpenConceptLab/ocl-cli), installed and logged in:
+
+```bash
+ocl whoami
+```
+
+It is the only credential handling in this repository — no skill stores or prompts for a
+token. Reads go through it freely; writes are governed by the rules below.
+
 ## House rules these skills follow
+
+The full, binding version is in [CLAUDE.md](CLAUDE.md), which is loaded automatically.
+The short form:
 
 1. **Confirm the destination every time.** `owner_type` + `owner` + `source`, plus the
    source's validation profile, asked explicitly and recorded in the batch file the user
@@ -46,12 +61,15 @@ is a separate question, and not one any of these skills answers.
 5. **Create, update and retire are different skills.** In OCL a concept line with
    `__action: DELETE` retires the concept; mixing that into a creation batch is how
    accidents happen.
-6. **The deliverable is a file; the user uploads it.** No skill here writes to OCL.
-   Generating and validating a batch requires no credentials. Where a live lookup genuinely
-   helps it is opt-in, read-only, and the flow works without it.
-7. **Write down what the server does.** Anything a skill relies on about OCL's
+6. **Scale decides the mechanism.** More than one concept or mapping is always a bulk
+   import file preceded by a CSV review. Exactly one isolated concept or mapping may go
+   through the `ocl` CLI, after an explicit confirmation showing the structured
+   before/after — no spreadsheet needed for a single item.
+7. **The CLI is a read tool by default,** and the session is verified with `ocl whoami`
+   before anything else, because it names the server as well as the user.
+8. **Write down what the server does.** Anything a skill relies on about OCL's
    behaviour belongs in that skill's `reference/`, not in a comment pointing elsewhere.
-8. **A terminology's house rules are a profile, not a fork.** CIEL, and any other owner
+9. **A terminology's house rules are a profile, not a fork.** CIEL, and any other owner
    with its own rulebook, is a `profile` layered on the shared flow — so the review gate,
    the artifact conventions and the OCL contract stay in one place.
 
