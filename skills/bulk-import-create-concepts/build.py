@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from schema import ConceptBatch, artifact_stem
-from validation import Report, load_batch, validate
+from validation import BatchLoadError, Report, load_batch, validate
 
 # OCL's bulk-import form rejects uploads larger than this.
 OCL_MAX_UPLOAD_BYTES = 99_614_720  # 95 MiB
@@ -186,7 +186,15 @@ def main(argv: list[str] | None = None) -> int:
                         help="pack only: build despite validation errors (requires an explicit user override)")
     args = parser.parse_args(argv)
 
-    batch = load_batch(args.batch)
+    try:
+        batch = load_batch(args.batch)
+    except BatchLoadError as exc:
+        # A structurally invalid batch cannot produce a CSV or a ZIP. Print the
+        # findings in the usual shape so the caller can fix and re-run.
+        print(f"refusing to build: {len(exc.report.errors)} structural error(s)")
+        for issue in exc.report.errors:
+            print(f"  {issue}")
+        return 1
     batch, report = validate(batch, probe=args.probe, token=args.token)
     stem = args.stem or artifact_stem(batch)
 

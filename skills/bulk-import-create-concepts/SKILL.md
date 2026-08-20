@@ -173,9 +173,24 @@ Defaults that match single-concept creation:
   `update_if_exists` can never match the line, so a re-run creates duplicates. Under the
   `ciel` profile an id is always required.
 
+Names and `name_type` deserve a note, because OCL has **no synonym type at all**: its
+validator accepts `FULLY_SPECIFIED`, `SHORT`, `INDEX_TERM`, or `name.type or 'None'`
+being in the `OCL/NameTypes` lookup — whose only values are `Index-Term`, `Short`,
+`Fully-Specified` and `None`. So the literal `"SYNONYM"` is **rejected** (`400 Invalid
+name type`), and a synonym is a name with **no** `name_type`.
+
+This skill accepts `"SYNONYM"`, `null` and `"None"` in the batch and emits all three as
+an absent type, so one meaning has one representation on the wire. Write `"SYNONYM"` — it
+says what you mean and survives review better than an omission.
+
+**State the type on every name.** The batch format defaults a missing `name_type` to
+`FULLY_SPECIFIED`, which is the inverse of OCL's reading, so an omission meant as a
+synonym becomes that locale's fully specified name. Within one locale a second omission
+collides and `one-fsn-per-locale` catches it, but a lone omitted name in *another* locale
+becomes that locale's FSN with nothing to object — reported as `name-type-defaulted`.
+
 Under the `ciel` profile, additionally: a missing `external_id` is derived as a stable
-UUID, and `"name_type": "SYNONYM"` is accepted and emitted as an absent type (OCL
-rejects the literal string). `examples/batch.ciel.example.json` is a working CIEL batch.
+UUID. `examples/batch.ciel.example.json` is a working CIEL batch.
 
 ### 3b. Extras
 
@@ -232,15 +247,40 @@ natural use of `defaults.extras`:
 An unknown key is a warning, not a blocker — a genuinely new key is legitimate. Ask the
 user to confirm it rather than silently shipping a misspelling.
 
-### 4. Validate
+### 4. Validate, then fix and re-validate until clean
 
 ```bash
 python validation.py batch.json --json
 ```
 
-Fix every `error`. Read every `warning` out loud to the user rather than swallowing it
-— OCL returns the offending line in its `others` bucket **without the error message**,
-so anything not caught here is expensive to diagnose after the upload.
+This is a loop, not a checkpoint. Every finding is a row with a `rule`, a `row` and a
+`concept_id` — including the structural ones, which used to escape as a pydantic
+traceback and now come back as `structural-invalid` rows like any other. Read them, edit
+the batch JSON, run again. Do not go to step 5 with errors outstanding, and do not hand
+the user a validation report to fix themselves — the report exists so *you* can act on
+it. `build.py` refuses to emit a CSV or a ZIP while errors remain, so a skipped loop
+fails loudly rather than shipping.
+
+Exit code is `1` while any error remains, `0` when only warnings are left.
+
+**What to fix yourself, and what to ask about.** The line is whether the correction is a
+transcription or a decision:
+
+| Fix it yourself | Ask the user |
+| --- | --- |
+| `structural-invalid` on a name/description type: the intended value is unambiguous (`"Sinonimo"` → `SYNONYM`) | `concept-class-invalid` / `datatype-invalid` where the intent is a guess (`Diagnostico` → `Diagnosis`? `Diagnostic Attribute`?) |
+| An id with characters OCL rejects, when a safe form is obvious | `duplicate-fsn-in-batch` — which of the two rows is wrong is the curator's call |
+| A missing `datatype` on a row whose classification is already settled | `concept-class-unclassified` / `datatype-unclassified` — that is the classification question of step 2, not a validation slip |
+| `CE-02` numeric metadata you can read off the concept's own description | `concept-already-exists` — the batch is targeting something live |
+
+A mis-cased vocabulary value is the interesting case: `datatype: "numeric"` is reported
+and **not** auto-corrected, because `Coded`/`Complex` and `Test`/`Text` are one keystroke
+apart and a wrong guess in clinical vocabulary is the failure this skill exists to
+prevent. Correcting the case of a value that exists is fine; inventing the value is not.
+
+Read every `warning` out loud to the user rather than swallowing it — OCL returns the
+offending line in its `others` bucket **without the error message**, so anything not
+caught here is expensive to diagnose after the upload.
 
 ### 5. Generate the CSV and get approval — before any zip
 

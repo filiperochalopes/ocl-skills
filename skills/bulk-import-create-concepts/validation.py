@@ -38,6 +38,7 @@ from typing import Any, Iterable, Literal
 from urllib.parse import quote
 
 import ciel_rules
+from pydantic import ValidationError as PydanticValidationError
 from schema import (
     CONCEPT_CLASSES,
     DATATYPES,
@@ -186,6 +187,19 @@ def validate_concept(concept: ConceptDraft, row: int, target: ImportTarget, repo
         report.add("error" if openmrs else "warning", "datatype-invalid",
                    f"Invalid data type {concept.datatype!r}; not in OCL/Datatypes",
                    row=row, concept_id=cid)
+
+    # --- name types --------------------------------------------------------- #
+    # OCL reads a missing name_type as a synonym; this batch format defaults it to
+    # FULLY_SPECIFIED, the opposite. Where the locale already has an FSN that
+    # collides, one-fsn-per-locale catches it — but a single omitted name in
+    # another locale becomes that locale's FSN with nothing to object. So say so.
+    for name in concept.names:
+        if name.name_type_defaulted:
+            report.add("warning", "name-type-defaulted",
+                       f"name {name.name!r} (locale {name.locale!r}) has no name_type and defaults to "
+                       f"FULLY_SPECIFIED. OCL reads a missing type as a synonym — the opposite — so state "
+                       "it explicitly: 'FULLY_SPECIFIED' for the locale's main name, 'SYNONYM' otherwise",
+                       row=row, concept_id=cid)
 
     # --- locales ------------------------------------------------------------ #
     supported = set(target.supported_locales or [])
@@ -442,9 +456,55 @@ def validate_against_source(batch: ConceptBatch, report: Report, token: str | No
 # --------------------------------------------------------------------------- #
 
 
+class BatchLoadError(Exception):
+    """A batch too malformed to validate, carrying a Report instead of a traceback.
+
+    The structural layer (`schema.py`) rejects unknown vocabulary values for
+    name_type, description_type and the like by raising inside a pydantic
+    validator. Left alone, that surfaces as a stack trace: it never reaches the
+    review CSV, and it stops at the *first* bad value instead of listing them all.
+    Since the caller of this module is normally an agent reading the report and
+    editing the batch, a traceback is the one output shape it cannot act on. So
+    every pydantic error is translated into the same Issue rows every other rule
+    produces, with the row number recovered from the error's location path.
+    """
+
+    def __init__(self, report: Report):
+        super().__init__(f"{len(report.errors)} structural error(s)")
+        self.report = report
+
+
+def _row_and_field(location: tuple[Any, ...]) -> tuple[int | None, str]:
+    """Turn a pydantic error location into a 1-based batch row and a field path.
+
+    ('concepts', 0, 'names', 0, 'name_type') -> (1, 'names.0.name_type')
+    """
+    if len(location) >= 2 and location[0] == "concepts" and isinstance(location[1], int):
+        return location[1] + 1, ".".join(str(part) for part in location[2:]) or "concept"
+    return None, ".".join(str(part) for part in location) or "batch"
+
+
 def load_batch(path: str | Path) -> ConceptBatch:
+    """Load and structurally validate a batch.
+
+    Raises BatchLoadError (which carries a Report) rather than letting a pydantic
+    ValidationError escape, so callers can print findings in the usual shape.
+    """
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    return ConceptBatch.model_validate(data)
+    try:
+        return ConceptBatch.model_validate(data)
+    except PydanticValidationError as exc:
+        report = Report()
+        concepts = data.get("concepts") if isinstance(data, dict) else None
+        for error in exc.errors():
+            row, field_path = _row_and_field(error.get("loc") or ())
+            concept_id = None
+            if row and isinstance(concepts, list) and row <= len(concepts):
+                entry = concepts[row - 1]
+                concept_id = str(entry.get("id")) if isinstance(entry, dict) and entry.get("id") else None
+            report.add("error", "structural-invalid",
+                       f"{field_path}: {error.get('msg')}", row=row, concept_id=concept_id)
+        raise BatchLoadError(report) from exc
 
 
 def validate(batch: ConceptBatch, *, probe: bool = False, token: str | None = None) -> tuple[ConceptBatch, Report]:
@@ -490,7 +550,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", dest="as_json", help="Emit the report as JSON")
     args = parser.parse_args(argv)
 
-    batch = load_batch(args.batch)
+    try:
+        batch = load_batch(args.batch)
+    except BatchLoadError as exc:
+        # Same output shape as any other failure: the structural layer is not a
+        # different kind of problem to the caller, only an earlier one.
+        if args.as_json:
+            print(json.dumps(exc.report.to_dict(), indent=2, ensure_ascii=False))
+        else:
+            _print(exc.report)
+        return 1
     _, report = validate(batch, probe=args.probe, token=args.token)
 
     if args.as_json:

@@ -162,7 +162,10 @@ def validate_concept(batch: ConceptBatch, concept: ConceptDraft, row: int, repor
                    row=row, concept_id=cid)
 
     # --- CE-02 / CE-03: numeric metadata ------------------------------------- #
-    if (concept.datatype or "").strip().lower() == "numeric":
+    # Exact match, not case-folded: a mis-cased 'numeric' is already reported as
+    # datatype-invalid, and firing here too would give one typo two findings that
+    # contradict each other — "not a datatype" and "this Numeric concept needs...".
+    if (concept.datatype or "").strip() == "Numeric":
         if not any(key in concept.extras for key in NUMERIC_EXTRA_KEYS):
             report.add("error", "CE-02",
                        "a Numeric concept needs numeric metadata in extras "

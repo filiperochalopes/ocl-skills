@@ -52,6 +52,10 @@ INDEX_TERM_ALIASES: frozenset[str] = frozenset({"INDEX_TERM", "Index Term"})
 # validator rejects a literal "SYNONYM", so it is accepted here and emitted as
 # an *absent* name_type. See reference/ciel-concept-rules.md.
 SYNONYM = "SYNONYM"
+# Every way a batch may spell "synonym". All of them are emitted as an absent
+# name_type: see ConceptName.to_payload for why OCL leaves no other option.
+SYNONYM_INPUT_ALIASES: frozenset[str] = frozenset({SYNONYM, "None"})
+
 NAME_TYPES: frozenset[str] = (
     FULLY_SPECIFIED_ALIASES | SHORT_ALIASES | INDEX_TERM_ALIASES
     | frozenset({"None", SYNONYM})
@@ -139,11 +143,30 @@ class ConceptName(BaseModel):
         )
 
     def to_payload(self) -> dict[str, Any]:
-        """OCL wire form. A SYNONYM is the *absence* of a name_type."""
+        """OCL wire form. A synonym is the *absence* of a name_type.
+
+        OCL has no synonym type: `custom_validators.name_type_should_be_valid_attribute`
+        accepts FULLY_SPECIFIED / SHORT / INDEX_TERM, or `name.type or 'None'` being in
+        the OCL/NameTypes lookup, whose only values are Index-Term, Short,
+        Fully-Specified and None. So the literal "SYNONYM" is rejected outright, and
+        both an absent type and the literal string "None" are accepted — the two of
+        them storing *different* values for one meaning. Every spelling of "synonym"
+        is therefore collapsed to the absent form here.
+        """
         payload = {k: v for k, v in self.model_dump().items() if v is not None}
-        if payload.get("name_type") == SYNONYM:
+        if payload.get("name_type") in SYNONYM_INPUT_ALIASES:
             payload.pop("name_type")
         return payload
+
+    @property
+    def name_type_defaulted(self) -> bool:
+        """True when the batch did not say what kind of name this is.
+
+        The default is FULLY_SPECIFIED, which is the *inverse* of OCL's own reading
+        of a missing type, so an omission that was meant as a synonym silently
+        becomes the locale's fully specified name. Reported, not second-guessed.
+        """
+        return "name_type" not in self.model_fields_set
 
     @property
     def is_fsn(self) -> bool:
