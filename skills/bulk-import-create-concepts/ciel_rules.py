@@ -20,7 +20,7 @@ import re
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from schema import ConceptBatch, ConceptDraft
+from schema import DEFAULT_TRUE_EXTRA_KEYS, ConceptBatch, ConceptDraft
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters for type checking
     from validation import Report
@@ -74,10 +74,9 @@ KNOWN_EXTRA_KEYS: dict[str, tuple[type, ...]] = {
     "clinical": (bool,),
 }
 
-# Boolean keys whose `true` is the default and therefore carries no information.
-# Writing them is redundant and makes the data inconsistent, because the same
-# meaning would then be expressed two ways: key absent, and key set to true.
-DEFAULT_TRUE_EXTRA_KEYS = frozenset({"clinical"})
+# DEFAULT_TRUE_EXTRA_KEYS lives in schema.py, because that is where the value is
+# acted on: a `true` is dropped from the emitted line, not merely reported. This
+# module only explains the omission to the reviewer.
 
 # Description metadata, keyed `<Label>(<external_id>)`.
 DESCRIPTION_META_RE = re.compile(
@@ -194,16 +193,32 @@ def validate_concept(batch: ConceptBatch, concept: ConceptDraft, row: int, repor
         actual_ok = (isinstance(value, bool) and bool in expected) or (
             not isinstance(value, bool) and isinstance(value, expected))
         if not actual_ok:
+            if key in DEFAULT_TRUE_EXTRA_KEYS:
+                # An error, not a warning, and the only typed key treated this way.
+                # For these keys absence itself carries meaning, so there is no
+                # "unknown" state to fall back to: the string "false" is truthy to
+                # every consumer, which silently inverts the very thing the key was
+                # written to say. OCL stores extras verbatim and validates nothing,
+                # so nothing downstream will catch it either.
+                report.add("error", "extras-unexpected-type",
+                           f"extras[{key!r}] is {type(value).__name__} {value!r}, not a JSON boolean. "
+                           f"This key means the opposite when read as a string — {value!r} is truthy — "
+                           "and absence already means true. Write a real false, or omit the key",
+                           row=row, concept_id=cid)
+                continue
             report.add("warning", "extras-unexpected-type",
                        f"extras[{key!r}] is {type(value).__name__} {value!r}; CIEL/CIEL stores this key as "
                        f"{' or '.join(e.__name__ for e in expected)}",
                        row=row, concept_id=cid)
             continue
-        if key in DEFAULT_TRUE_EXTRA_KEYS and value is True:
-            report.add("warning", "extras-redundant-default",
-                       f"extras[{key!r}] is true, which is the default — CIEL stores this key only when "
-                       "it is false. Drop it, so that absence consistently means true",
-                       row=row, concept_id=cid)
+
+    # Report what _apply_defaults already dropped, so the omission is visible in
+    # the review sheet rather than silent.
+    for key in concept.omitted_default_extras:
+        report.add("warning", "extras-redundant-default",
+                   f"extras[{key!r}] was true, which is CIEL's default — the key is stored only when "
+                   "it is false, so it has been omitted from the emitted line. Absence means true",
+                   row=row, concept_id=cid)
 
     # --- mapping rules ------------------------------------------------------- #
     # Validated against the DECLARED list, not the de-duplicated one that gets

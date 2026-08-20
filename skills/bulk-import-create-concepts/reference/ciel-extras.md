@@ -79,15 +79,27 @@ that is the default, so storing `true` adds nothing.
 | --- | --- |
 | `"extras": {"clinical": false}` | not clinical |
 | key absent | clinical (the default) |
-| `"extras": {"clinical": true}` | clinical, but redundantly — reported as `extras-redundant-default` |
+| `"extras": {"clinical": true}` | clinical — the key is **dropped from the emitted line** and reported as `extras-redundant-default` |
+
+A non-boolean `clinical` is the one typed-key mismatch reported as an **error** rather
+than a warning, and the reason is the default itself. OCL stores extras verbatim and
+validates nothing — verified: importing `{"clinical": "false"}` yields the stored string
+`'false'`, with `Created: 1` and no complaint. Every consumer then reads a truthy value
+and calls the concept clinical, which is the exact opposite of what was written. For a key
+where absence already means `true` there is no "unknown" state to fall back to, so the
+mistake is undetectable downstream. Other typed keys stay warnings: a string `units` is
+untidy but recoverable, and CIEL's imported lookup sources genuinely mix the forms.
 
 This matters for anything reading the data back: **a missing `clinical` is not "unknown",
 it is `true`**. Read code should default to clinical rather than to null, and must not
 treat absence as a reason to skip the concept.
 
-Writing `true` is a warning rather than an error because the stored value is not wrong,
-only redundant. Left in place, it splits one meaning across two representations — key
-absent and key `true` — and every consumer then has to handle both.
+Writing `true` is a warning rather than an error because nothing about the request is
+wrong — only its representation. So the skill fixes the representation instead of failing
+the batch: `schema.py` drops the key in `_apply_defaults` (see `DEFAULT_TRUE_EXTRA_KEYS`)
+and the warning explains the omission, rather than asking the author to delete it by hand.
+Left in place, a `true` would split one meaning across two representations — key absent
+and key `true` — and every consumer would then have to handle both.
 
 A real JSON boolean, like `allow_decimal` — not the string `"false"`. A string is
 reported as `extras-unexpected-type`, which catches both the obvious `"false"` and the
@@ -139,8 +151,9 @@ copy-paste from the wrong pipeline:
 | `extras-reserved-key` | error | a key OCL owns as a column |
 | `extras-unknown-key` | warning | not in the vocabulary and not description metadata |
 | `extras-unexpected-type` | warning | known key carrying a different JSON type than the live data |
-| `extras-redundant-default` | warning | `clinical: true` — the default, so the key should be omitted |
+| `extras-redundant-default` | warning | `clinical: true` — the default, so the key **is** omitted from the emitted line |
 | `extras-string-boolean` | warning | any value is the string `"true"` / `"false"` |
+| `extras-unexpected-type` on `clinical` | **error** | a non-boolean `clinical` — see below |
 | `extras-key-whitespace` | error | leading or trailing whitespace in a key |
 
 `extras-string-boolean` is generic rather than CIEL-specific, because the trap is OCL's:
@@ -154,7 +167,7 @@ The boolean-ish keys, for reference:
 | key | correct form | wrong form |
 | --- | --- | --- |
 | `allow_decimal` | JSON `true` / `false` | `"true"` |
-| `clinical` | JSON `false`, or omitted | `"false"`, `"yes"`, or a redundant `true` |
+| `clinical` | JSON `false`, or omitted | `"false"`, `"yes"` (**error**), or a redundant `true` (dropped) |
 | `is_set` | integer `1` | `"1"`, `true` |
 
 `is_set` is the odd one out, and that is the data's doing, not a choice made here.

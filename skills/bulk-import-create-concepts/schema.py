@@ -190,6 +190,13 @@ class ConceptDescription(BaseModel):
 PARENT_CONCEPT_SENTINEL = "__parent_concept"
 
 
+# Extras keys whose `true` is CIEL's default and therefore carries no information.
+# Only `false` is ever stored: absence means true. A `true` written by hand is
+# dropped at emission time under the `ciel` profile, so the same meaning is never
+# expressed two ways (key absent, and key set to true). ciel_rules imports this.
+DEFAULT_TRUE_EXTRA_KEYS = frozenset({"clinical"})
+
+
 class ConceptMapping(BaseModel):
     """A mapping emitted nested inside the concept line.
 
@@ -287,6 +294,9 @@ class ConceptDraft(BaseModel):
     # Set by ConceptBatch when defaults are resolved; see FieldOrigin.
     _concept_class_origin: FieldOrigin = PrivateAttr(default="explicit")
     _datatype_origin: FieldOrigin = PrivateAttr(default="explicit")
+    # Extras dropped as redundant defaults, kept so the review sheet can say so
+    # instead of the value vanishing without trace. See DEFAULT_TRUE_EXTRA_KEYS.
+    _omitted_default_extras: dict[str, Any] = PrivateAttr(default_factory=dict)
 
     @property
     def concept_class_origin(self) -> FieldOrigin:
@@ -295,6 +305,11 @@ class ConceptDraft(BaseModel):
     @property
     def datatype_origin(self) -> FieldOrigin:
         return self._datatype_origin
+
+    @property
+    def omitted_default_extras(self) -> dict[str, Any]:
+        """Extras keys dropped because their value was CIEL's implicit default."""
+        return self._omitted_default_extras
 
     @field_validator("id")
     @classmethod
@@ -424,6 +439,15 @@ class ConceptBatch(BaseModel):
             if self.defaults.extras:
                 # Batch-wide extras, with the concept's own keys taking priority.
                 concept.extras = {**self.defaults.extras, **concept.extras}
+            if ciel:
+                # `clinical: true` restates CIEL's default, so it is dropped here
+                # rather than written: absence is the one way to say "clinical".
+                # Done before validation and before the CSV, so the review sheet
+                # and the JSONL never disagree. A non-boolean `"true"` is left
+                # alone and reported as a type problem instead.
+                for key in DEFAULT_TRUE_EXTRA_KEYS:
+                    if concept.extras.get(key) is True:
+                        concept._omitted_default_extras[key] = concept.extras.pop(key)
             if ciel and not concept.external_id and concept.id:
                 # Derived, not random: the CSV under review and the ZIP built
                 # afterwards must carry the same value, and a re-run must be
