@@ -2,13 +2,15 @@
 
 Stage, review and package the creation of many OpenConceptLab concepts at once.
 
-> [!IMPORTANT]
-> Concepts created with **nested mappings depend on the fix for https://github.com/OpenConceptLab/ocl_issues/issues/2683**.
-> OCL's bulk importer currently drops a concept line's `mappings` key silently: the
-> import reports success and the mappings never exist. This skill emits the nested form
-> on purpose, matching what the CIEL editor posts, so that batches are correct the day
-> the fix lands. Until then, verify mappings after every import, or create them
-> separately.
+> [!NOTE]
+> **Nested mappings work.** https://github.com/OpenConceptLab/ocl_issues/issues/2683 is
+> fixed and deployed — verified end to end against OCL `2.3.201-846796dc` on 2026-08-20,
+> including the `__parent_concept` self mapping on an auto-id source. This skill emits
+> the nested form, matching what the CIEL editor posts.
+>
+> One caveat survives the fix: OCL's import summary counts **concept lines only**, so
+> `Created: N` says nothing about the mappings. Verify a sample of ids after every
+> import that carries mappings.
 
 Curators need to stage a batch of new concepts, see what would be created, and catch
 invalid rows *before* anything is imported — with the same defaults and validation as

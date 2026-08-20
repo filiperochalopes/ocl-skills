@@ -66,20 +66,33 @@ expects the editor to reflect it.
 
 ## Governance flags
 
-| key | type | notes |
-| --- | --- | --- |
-| `clinical` | boolean | **Declared by CIEL, not yet present in the live data** — zero occurrences in the sample |
+| key | type | stored when | notes |
+| --- | --- | --- | --- |
+| `clinical` | boolean | **only `false`** | **Declared by CIEL, not yet present in the live data** — zero occurrences in the sample |
 
-A real JSON `true` / `false`, like `allow_decimal` — not the string `"true"`. A string
-value is reported as `extras-unexpected-type`, which catches both the obvious
-`"false"` and the sloppier `"yes"` in one rule.
+### Absence means `true`
 
-Booleans are the right call here: OCL stores extras verbatim, so a string would force
-every consumer to normalise casing and truthy spellings before comparing, and one that
-forgot would silently read `"false"` as truthy.
+`clinical` is written **only when it is `false`**. A concept without the key is clinical;
+that is the default, so storing `true` adds nothing.
 
-Because the key is new, expect it to be absent on existing concepts. Read code should
-treat a missing `clinical` as "not set" rather than assuming a default.
+| concept | meaning |
+| --- | --- |
+| `"extras": {"clinical": false}` | not clinical |
+| key absent | clinical (the default) |
+| `"extras": {"clinical": true}` | clinical, but redundantly — reported as `extras-redundant-default` |
+
+This matters for anything reading the data back: **a missing `clinical` is not "unknown",
+it is `true`**. Read code should default to clinical rather than to null, and must not
+treat absence as a reason to skip the concept.
+
+Writing `true` is a warning rather than an error because the stored value is not wrong,
+only redundant. Left in place, it splits one meaning across two representations — key
+absent and key `true` — and every consumer then has to handle both.
+
+A real JSON boolean, like `allow_decimal` — not the string `"false"`. A string is
+reported as `extras-unexpected-type`, which catches both the obvious `"false"` and the
+sloppier `"yes"` in one rule. Booleans avoid forcing every consumer to normalise casing
+and truthy spellings, where one that forgot would read `"false"` as truthy.
 
 ## Sets
 
@@ -126,6 +139,7 @@ copy-paste from the wrong pipeline:
 | `extras-reserved-key` | error | a key OCL owns as a column |
 | `extras-unknown-key` | warning | not in the vocabulary and not description metadata |
 | `extras-unexpected-type` | warning | known key carrying a different JSON type than the live data |
+| `extras-redundant-default` | warning | `clinical: true` — the default, so the key should be omitted |
 | `extras-string-boolean` | warning | any value is the string `"true"` / `"false"` |
 | `extras-key-whitespace` | error | leading or trailing whitespace in a key |
 
@@ -140,7 +154,7 @@ The boolean-ish keys, for reference:
 | key | correct form | wrong form |
 | --- | --- | --- |
 | `allow_decimal` | JSON `true` / `false` | `"true"` |
-| `clinical` | JSON `true` / `false` | `"true"`, `"yes"` |
+| `clinical` | JSON `false`, or omitted | `"false"`, `"yes"`, or a redundant `true` |
 | `is_set` | integer `1` | `"1"`, `true` |
 
 `is_set` is the odd one out, and that is the data's doing, not a choice made here.

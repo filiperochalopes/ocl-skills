@@ -68,9 +68,16 @@ KNOWN_EXTRA_KEYS: dict[str, tuple[type, ...]] = {
     "precise": (bool,),
     "is_set": (bool, int),
     # Declared by CIEL, not yet present in the live data. A real JSON boolean,
-    # like allow_decimal — not the string "true"/"false".
+    # like allow_decimal — not the string "true"/"false". Only `false` is ever
+    # stored: absence means clinical, so `true` is the default. See
+    # DEFAULT_TRUE_EXTRA_KEYS.
     "clinical": (bool,),
 }
+
+# Boolean keys whose `true` is the default and therefore carries no information.
+# Writing them is redundant and makes the data inconsistent, because the same
+# meaning would then be expressed two ways: key absent, and key set to true.
+DEFAULT_TRUE_EXTRA_KEYS = frozenset({"clinical"})
 
 # Description metadata, keyed `<Label>(<external_id>)`.
 DESCRIPTION_META_RE = re.compile(
@@ -190,6 +197,12 @@ def validate_concept(batch: ConceptBatch, concept: ConceptDraft, row: int, repor
             report.add("warning", "extras-unexpected-type",
                        f"extras[{key!r}] is {type(value).__name__} {value!r}; CIEL/CIEL stores this key as "
                        f"{' or '.join(e.__name__ for e in expected)}",
+                       row=row, concept_id=cid)
+            continue
+        if key in DEFAULT_TRUE_EXTRA_KEYS and value is True:
+            report.add("warning", "extras-redundant-default",
+                       f"extras[{key!r}] is true, which is the default — CIEL stores this key only when "
+                       "it is false. Drop it, so that absence consistently means true",
                        row=row, concept_id=cid)
 
     # --- mapping rules ------------------------------------------------------- #

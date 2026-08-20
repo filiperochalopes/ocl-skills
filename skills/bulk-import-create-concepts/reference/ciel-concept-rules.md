@@ -28,100 +28,83 @@ code, inside CIEL itself.** Not to an external terminology — CIEL → CIEL.
 The `ciel` profile adds this line automatically for every concept. Do not write it by
 hand; if you do, it is de-duplicated and reported as redundant (FR-13, warning).
 
-### Emitted nested — and why that is currently blocked
+### Emitted nested — and why that now works
 
 The skill emits mappings **nested inside the concept line**, matching what the CIEL
 editor posts. A concept without an `id` carries `"to_concept": "__parent_concept"`
 instead of `to_concept_code`, and OCL resolves it after assigning the mnemonic — which
 is why ids stay optional under this profile.
 
-> [!IMPORTANT]
-> This depends on the fix for https://github.com/OpenConceptLab/ocl_issues/issues/2683. Today OCL's bulk
-> importer drops the `mappings` key silently and the import still reports success.
-
-Two facts explain the gap.
-
-1. **A concept line cannot carry mappings.** The bulk concept importer filters every
-   line through an allowlist of exactly twelve fields — `id, external_id, concept_class,
-   datatype, names, descriptions, retired, extras, parent_concept_urls, update_comment,
-   comment, retire_reason` — with `{k: v for k, v in self.data.items() if k in
-   self.allowed_fields}`. A `mappings` key is **dropped silently, with no error**: the
-   concepts import fine and the mappings simply never exist. Mappings must therefore be
-   their own `{"type":"Mapping"}` lines, ordered after the concepts they reference.
-2. **A standalone mapping line needs `from_concept_url`**, which needs the concept's id.
-   Its importer accepts only `to_source_url` / `to_concept_code` / `to_concept_url` —
-   there is no `to_concept` field, so the `__parent_concept` sentinel cannot be used on
-   a `{"type":"Mapping"}` line either.
-
-### This is an allowlist gap, not an architectural limit
-
-Worth stating precisely, because it is the kind of thing that gets fixed upstream and
-would delete this whole constraint.
-
-The sentinel machinery **is** present on the bulk path and sits one function call away.
-`ConceptImporter.process()` calls `Concept.persist_new(data=persist_data, ...)`, and
-`persist_new` opens with:
+This used to be aspirational: the bulk concept importer filtered every line through an
+allowlist that omitted `mappings`, so the key was dropped with no error and the import
+still reported success. https://github.com/OpenConceptLab/ocl_issues/issues/2683 closed
+that gap with two lines in `core/importers/models.py`:
 
 ```python
-mappings_payload = data.pop('mappings_payload', None) or data.pop('mappings', None) or []
-...
-if mappings_payload:
-    mappings_result, has_mapping_errors = concept.create_mappings(mappings_payload)
+# ConceptImporter.allowed_fields  — 'mappings' added
+# ConceptImporter.parse()
+self.data['mappings_payload'] = self.data.pop('mappings', [])
 ```
 
-`create_mappings` calls `_create_mapping_from_self`, which is exactly where
-`"to_concept": "__parent_concept"` is swapped for the freshly assigned concept URI —
-the same code the CIEL editor's single-concept POST relies on.
-
-In other words `persist_new` would accept nested mappings today; they never reach it
-because `mappings` is missing from `ConceptImporter.allowed_fields`. Adding that one
-entry would let a bulk file carry the self mapping inline and let OCL assign the ids,
-removing the explicit-id requirement entirely.
+which hands the payload to the same `Concept.persist_new` → `create_mappings` →
+`_create_mapping_from_self` path the CIEL editor's `POST /concepts/` has always used.
+That last function is where `"to_concept": "__parent_concept"` is swapped for the freshly
+assigned concept URI. Standalone `{"type":"Mapping"}` lines are still an option, but they
+are no longer required, and they still cannot express a self mapping for an auto-id
+concept — a mapping line needs `from_concept_url`, and its importer has no `to_concept`
+field for the sentinel.
 
 ### Verified against a running server
 
-Not inferred from the source — run end to end against OCL API 2.3.201-dev on 2026-08-16.
+Not inferred from the source — run end to end on 2026-08-20 against a local build of
+`master`, whose 2683 commit (`99eb4430`) is an ancestor of the production build
+`2.3.201-846796dc`.
 
-**Bulk import, nested mappings.** One concept line carrying
-`"mappings":[{"map_type":"SAME-AS","to_source_url":"...","to_concept":"__parent_concept"}]`:
-
-```
-task state: SUCCESS
-message:    Processed: 1/1 | Created: 1
-concepts in source: 1
-mappings in source: 0        <-- silently dropped
-```
-
-**The same payload through the REST endpoint CIEL Lab uses**, `POST /concepts/`:
+**Nested self mapping, explicit id.** One concept line carrying
+`"mappings":[{"map_type":"SAME-AS","to_source_url":"...","to_concept_code":"T1"}]`:
 
 ```
-http 201
-mappings in source: 1        SAME-AS 2 -> 2
+task state: SUCCESS   Processed: 5/5 | Created: 5
+SAME-AS  T1 -> T1     url /orgs/.../concepts/T1/
 ```
 
-Same server, same payload shape, opposite result. The REST view has an explicit
-translation step the bulk importer never got:
-
-```python
-# core/concepts/views.py, ConceptListView.post
-data['mappings_payload'] = data.pop('mappings', [])
-```
-
-paired with `mappings_payload = ListField(child=JSONField(), write_only=True, ...)`
-declared on the serializer. That one line is why CIEL Lab can leave ids to OCL.
-
-**This skill's approach — separate `{"type":"Mapping"}` lines with explicit ids** —
-imported from a generated ZIP:
+**Nested self mapping, no id, auto-id source** (`autoid_concept_mnemonic: sequential`),
+using `"to_concept": "__parent_concept"`:
 
 ```
-task state: SUCCESS
-message:    Processed: 2/2 | Created: 2
-mappings in source: 1        SAME-AS 5001 -> 5001
+concept created as 1000
+SAME-AS  1000 -> 1000  url /orgs/.../concepts/1000/
 ```
 
-So: do not put `mappings` on a concept line hoping it will work. The import reports
-success while producing concepts with no mappings at all — the failure is invisible at
-import time and only surfaces in a later QA pass.
+**Cross-line references resolve in either direction.** `T2` on line 2 mapping to `T3`
+declared on line 3, and `T4` mapping by `to_concept_url` to `T1` from line 1 — both
+resolved, despite `BulkImportParallelRunner` splitting one part's concept lines across
+parallel chunks. `to_concept_code` is stored literally and linked afterwards by
+`update_mappings_concept`, so line order does not matter.
+
+**Which is also the trap.** A mapping whose target does not exist at all is accepted:
+
+```
+NARROWER-THAN  T7 -> code=DOES-NOT-EXIST   url=None
+NARROWER-THAN  T8 -> code=ALSO-MISSING     url=None
+```
+
+No error, no warning, `Created: 4`. A typo in `to_concept_code` produces a mapping that
+looks fine in the count and points at nothing. This is why the post-import check reads
+the actual mappings on sampled ids rather than the import summary.
+
+**This skill's own output**, generated by `build.py pack` under the `ciel` profile and
+imported from the ZIP:
+
+```
+Processed: 2/2 | Created: 2
+900201  SAME-AS       -> 900201   (auto self mapping, derived external_id present)
+900202  SAME-AS       -> 900202
+900202  NARROWER-THAN -> 900201
+```
+
+Extras (`units`, `low_absolute: 0`), derived concept and mapping external ids, and the
+`FULLY_SPECIFIED` / `Definition` locales all survived verbatim.
 
 ---
 

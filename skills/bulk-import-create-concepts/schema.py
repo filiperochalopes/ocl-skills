@@ -193,8 +193,8 @@ PARENT_CONCEPT_SENTINEL = "__parent_concept"
 class ConceptMapping(BaseModel):
     """A mapping emitted nested inside the concept line.
 
-    See the IMPORTANT notice in README.md: nested mappings are currently dropped
-    by OCL's bulk importer and depend on an upstream fix.
+    Nested mappings import correctly since ocl_issues#2683; OCL's import summary
+    still counts only concept lines, so verify them afterwards (see README.md).
     """
 
     model_config = ConfigDict(extra="forbid")

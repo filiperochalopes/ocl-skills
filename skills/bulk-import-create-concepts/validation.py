@@ -461,10 +461,11 @@ def validate(batch: ConceptBatch, *, probe: bool = False, token: str | None = No
     validate_batch_uniqueness(batch, report)
     ciel_rules.validate(batch, report)
     if any(batch.mappings_for(concept) for concept in batch.concepts):
-        report.add("warning", "nested-mappings-blocked",
-                   "this batch carries nested mappings, which OCL's bulk importer currently DROPS "
-                   "SILENTLY — the import will report success and the mappings will not exist. "
-                   "Depends on the upstream fix; see the IMPORTANT notice in README.md")
+        report.add("warning", "nested-mappings-verify-after-import",
+                   "this batch carries nested mappings. They do import (ocl_issues#2683 landed; "
+                   "verified against OCL 2.3.201-846796dc), but OCL's import summary counts only "
+                   "concept lines — a dropped or rejected mapping is invisible in 'Created: N'. "
+                   "Check the mappings on a sample of ids after importing")
 
     if probe:
         validate_against_source(batch, report, token)

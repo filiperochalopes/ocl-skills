@@ -43,16 +43,20 @@ concept line the same way the CIEL editor posts it. Concepts without an `id` use
 `__parent_concept` sentinel, so ids remain optional.
 
 > [!IMPORTANT]
-> Nested mappings depend on the fix for https://github.com/OpenConceptLab/ocl_issues/issues/2683. OCL's bulk
-> importer drops a concept line's `mappings` key **silently** — the import reports
-> success and the mappings do not exist. Emitting the nested form is a deliberate
-> decision so batches are correct when the fix lands.
+> Nested mappings **do** import. https://github.com/OpenConceptLab/ocl_issues/issues/2683
+> is fixed and live — verified end to end against OCL `2.3.201-846796dc` on 2026-08-20:
+> a concept line's `mappings` are created, cross-line `to_concept_code` references resolve
+> regardless of line order, and `"to_concept": "__parent_concept"` self-maps a concept
+> whose mnemonic the source assigned.
 >
-> Tell the user this every time a batch carries mappings: after importing, check the
-> source's mapping count against the CSV before treating the batch as done.
+> What did *not* change is the reporting. OCL's import summary counts **concept lines
+> only**, so `Created: N` is silent about mappings — and a mapping whose target does not
+> exist is accepted and stored as a bare `to_concept_code` with no resolved target, no
+> error. Tell the user this every time a batch carries mappings: after importing, check
+> the source's mapping count against the CSV before treating the batch as done.
 
-`validation.py` raises `nested-mappings-blocked` on any batch carrying mappings, so the
-warning also reaches the review CSV.
+`validation.py` raises `nested-mappings-verify-after-import` on any batch carrying
+mappings, so that reminder also reaches the review CSV.
 
 ## Scope
 
@@ -210,6 +214,14 @@ Some keys are load-bearing: the numeric metadata (`units`, `hi_absolute`,
 
 Mind the boolean-ish keys: `allow_decimal` and `clinical` are real JSON booleans, while
 `is_set` is the integer `1` — the last is the live data's doing, not a choice.
+
+`clinical` is stored **only when `false`**: absence means clinical, so a `true` is
+redundant and reported as `extras-redundant-default`. Tagging a batch of non-clinical
+concepts is a natural use of `defaults.extras`:
+
+```json
+"defaults": {"extras": {"clinical": false}}
+```
 
 An unknown key is a warning, not a blocker — a genuinely new key is legitimate. Ask the
 user to confirm it rather than silently shipping a misspelling.
