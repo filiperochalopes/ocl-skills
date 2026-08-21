@@ -217,7 +217,7 @@ PARENT_CONCEPT_SENTINEL = "__parent_concept"
 # Only `false` is ever stored: absence means true. A `true` written by hand is
 # dropped at emission time under the `ciel` profile, so the same meaning is never
 # expressed two ways (key absent, and key set to true). ciel_rules imports this.
-DEFAULT_TRUE_EXTRA_KEYS = frozenset({"clinical"})
+DEFAULT_TRUE_EXTRA_KEYS = frozenset({"is_clinical"})
 
 
 class ConceptMapping(BaseModel):
@@ -463,7 +463,7 @@ class ConceptBatch(BaseModel):
                 # Batch-wide extras, with the concept's own keys taking priority.
                 concept.extras = {**self.defaults.extras, **concept.extras}
             if ciel:
-                # `clinical: true` restates CIEL's default, so it is dropped here
+                # `is_clinical: true` restates CIEL's default, so it is dropped here
                 # rather than written: absence is the one way to say "clinical".
                 # Done before validation and before the CSV, so the review sheet
                 # and the JSONL never disagree. A non-boolean `"true"` is left

@@ -198,8 +198,8 @@ UUID. `examples/batch.ciel.example.json` is a working CIEL batch.
 Two ways to set it:
 
 ```json
-"defaults": {"extras": {"clinical": "false", "source_of_truth": "curator-request"}},
-"concepts": [{"id": "7102", "extras": {"clinical": "true"}}]
+"defaults": {"extras": {"is_clinical": "false", "source_of_truth": "curator-request"}},
+"concepts": [{"id": "7102", "extras": {"is_clinical": "true"}}]
 ```
 
 Batch `defaults.extras` is merged into every concept; a key the concept sets itself
@@ -227,21 +227,21 @@ actually uses, sampled from the live source — see `reference/ciel-extras.md`:
 Some keys are load-bearing: the numeric metadata (`units`, `hi_absolute`,
 `allow_decimal`, …) drives CE-02/CE-03, and `is_set` drives CE-04.
 
-Mind the boolean-ish keys: `allow_decimal` and `clinical` are real JSON booleans, while
+Mind the boolean-ish keys: `allow_decimal` and `is_clinical` are real JSON booleans, while
 `is_set` is the integer `1` — the last is the live data's doing, not a choice.
 
-`clinical` is stored **only when `false`**: absence means clinical. So a `true` — written
+`is_clinical` is stored **only when `false`**: absence means clinical. So a `true` — written
 per concept or inherited from `defaults.extras` — is **dropped from the emitted line**,
 not passed through, and reported as `extras-redundant-default`. The drop happens before
 the review CSV is written, so the CSV's `extras` column and the JSONL always agree. A
-non-boolean `clinical` is **an error**, not a warning: OCL stores extras verbatim, so
+non-boolean `is_clinical` is **an error**, not a warning: OCL stores extras verbatim, so
 `"false"` lands as a truthy string and inverts the meaning, and absence already means
 `true` so there is no "unknown" to fall back to. It is the only typed extras key that
 blocks the batch — the others stay warnings. Tagging a batch of non-clinical concepts is a
 natural use of `defaults.extras`:
 
 ```json
-"defaults": {"extras": {"clinical": false}}
+"defaults": {"extras": {"is_clinical": false}}
 ```
 
 An unknown key is a warning, not a blocker — a genuinely new key is legitimate. Ask the

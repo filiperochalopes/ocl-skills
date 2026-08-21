@@ -71,7 +71,7 @@ KNOWN_EXTRA_KEYS: dict[str, tuple[type, ...]] = {
     # like allow_decimal — not the string "true"/"false". Only `false` is ever
     # stored: absence means clinical, so `true` is the default. See
     # DEFAULT_TRUE_EXTRA_KEYS.
-    "clinical": (bool,),
+    "is_clinical": (bool,),
 }
 
 # DEFAULT_TRUE_EXTRA_KEYS lives in schema.py, because that is where the value is

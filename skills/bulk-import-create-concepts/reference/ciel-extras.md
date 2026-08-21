@@ -68,29 +68,29 @@ expects the editor to reflect it.
 
 | key | type | stored when | notes |
 | --- | --- | --- | --- |
-| `clinical` | boolean | **only `false`** | **Declared by CIEL, not yet present in the live data** — zero occurrences in the sample |
+| `is_clinical` | boolean | **only `false`** | **Declared by CIEL, not yet present in the live data** — zero occurrences in the sample |
 
 ### Absence means `true`
 
-`clinical` is written **only when it is `false`**. A concept without the key is clinical;
+`is_clinical` is written **only when it is `false`**. A concept without the key is clinical;
 that is the default, so storing `true` adds nothing.
 
 | concept | meaning |
 | --- | --- |
-| `"extras": {"clinical": false}` | not clinical |
+| `"extras": {"is_clinical": false}` | not clinical |
 | key absent | clinical (the default) |
-| `"extras": {"clinical": true}` | clinical — the key is **dropped from the emitted line** and reported as `extras-redundant-default` |
+| `"extras": {"is_clinical": true}` | clinical — the key is **dropped from the emitted line** and reported as `extras-redundant-default` |
 
-A non-boolean `clinical` is the one typed-key mismatch reported as an **error** rather
+A non-boolean `is_clinical` is the one typed-key mismatch reported as an **error** rather
 than a warning, and the reason is the default itself. OCL stores extras verbatim and
-validates nothing — verified: importing `{"clinical": "false"}` yields the stored string
+validates nothing — verified: importing `{"is_clinical": "false"}` yields the stored string
 `'false'`, with `Created: 1` and no complaint. Every consumer then reads a truthy value
 and calls the concept clinical, which is the exact opposite of what was written. For a key
 where absence already means `true` there is no "unknown" state to fall back to, so the
 mistake is undetectable downstream. Other typed keys stay warnings: a string `units` is
 untidy but recoverable, and CIEL's imported lookup sources genuinely mix the forms.
 
-This matters for anything reading the data back: **a missing `clinical` is not "unknown",
+This matters for anything reading the data back: **a missing `is_clinical` is not "unknown",
 it is `true`**. Read code should default to clinical rather than to null, and must not
 treat absence as a reason to skip the concept.
 
@@ -151,9 +151,9 @@ copy-paste from the wrong pipeline:
 | `extras-reserved-key` | error | a key OCL owns as a column |
 | `extras-unknown-key` | warning | not in the vocabulary and not description metadata |
 | `extras-unexpected-type` | warning | known key carrying a different JSON type than the live data |
-| `extras-redundant-default` | warning | `clinical: true` — the default, so the key **is** omitted from the emitted line |
+| `extras-redundant-default` | warning | `is_clinical: true` — the default, so the key **is** omitted from the emitted line |
 | `extras-string-boolean` | warning | any value is the string `"true"` / `"false"` |
-| `extras-unexpected-type` on `clinical` | **error** | a non-boolean `clinical` — see below |
+| `extras-unexpected-type` on `is_clinical` | **error** | a non-boolean `is_clinical` — see below |
 | `extras-key-whitespace` | error | leading or trailing whitespace in a key |
 
 `extras-string-boolean` is generic rather than CIEL-specific, because the trap is OCL's:
@@ -167,7 +167,7 @@ The boolean-ish keys, for reference:
 | key | correct form | wrong form |
 | --- | --- | --- |
 | `allow_decimal` | JSON `true` / `false` | `"true"` |
-| `clinical` | JSON `false`, or omitted | `"false"`, `"yes"` (**error**), or a redundant `true` (dropped) |
+| `is_clinical` | JSON `false`, or omitted | `"false"`, `"yes"` (**error**), or a redundant `true` (dropped) |
 | `is_set` | integer `1` | `"1"`, `true` |
 
 `is_set` is the odd one out, and that is the data's doing, not a choice made here.
